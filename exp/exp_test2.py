@@ -87,7 +87,6 @@ def my_data(split,data):
     
     if split == 'val'：
         val_i = val_i + 1
-        val_i = val_i // 2
         for i in range(len(data)):
             x = data[i]
             # 归一化
@@ -123,7 +122,7 @@ def my_data(split,data):
 
         #A===========
         train_i = train_i + 1
-        train_i = train_i // 2
+        train_i = train_i // 3
 
         for i in range(len(data)):
             x = data[i]

@@ -143,7 +143,6 @@ class Model(nn.Module):
             x = self.model(x)
             x = x.permute(0,2,1)    # x: [Batch, Input length, Channel]
         
-        #======== 只有encoder
         x = self.enc_embedding(x, None)
         x, attns = self.encoder(x, None)
         x = x[:, -self.pred_len:, :] 
