@@ -41,6 +41,7 @@ intervention_index = InterventionModel(input_id).detach()
 def get_data(folder_path):
     train = []
     test = []
+    val = []
     csv_files = [f for f in os.listdir(folder_path) if f.endswith('.csv')]
 
     # 按照文件名进行排序（字母顺序）
@@ -50,12 +51,14 @@ def get_data(folder_path):
             file_path = os.path.join(folder_path, filename)
             df = pd.read_csv(file_path,dtype=float)
             df = df.set_index('Time').sort_index()
-            if('test' not in filename):
+            if('val' in filename):
+                val.append(df)
+            elif('test' not in filename):
                 train.append(df)
             else:
                 test.append(df)
-    return train, test, train[0].index;
-    # 获取训练数据和测试数据
+    return train, test, val, train[0].index;
+
 
 
 # 数据集处理，获取对应的数据以及标签
@@ -74,26 +77,60 @@ pre_len = 30
 
 train_i = -1
 test_i = -1
+val_i = -1
 def my_data(split,data):
     global intervention_index
     global train_i, test_i
 
     scaler = MinMaxScaler()
     seq = []
-    # 训练和验证
-    if split != 'test':    
+    
+    if split == 'val'：
+        val_i = val_i + 1
+        for i in range(len(data)):
+            x = data[i]
+            # 归一化
+            normalized_data = scaler.fit_transform(x)
+            for j in range(0,18):
+                #for i in range(len(normalized_data) - 160):
+                for i in range(len(normalized_data) - seq_len - pre_len):
+                #for i in range(len(normalized_data) - 190):
+                    # 21s => 15s   (70  => 50)
+                    # 12s => 15s     (40 => 50)
+                    val_seq,val_label = [],[]
+                    #for k in range(i,i+100):
+                    for k in range(i,i + seq_len):
+                        #train_seq.append([normalized_data[k,j],normalized_data[k,j+18]])
+                        # 温度加顶棚温度
+                        val_seq.append([normalized_data[k,j],normalized_data[k,-1]])
+                    # 未来的10个时间点3s
+                    for k in range(i + seq_len,i + seq_len + pre_len):
+                    #for k in range(i+100,i+190):
+                        val_label.append([normalized_data[k,j], normalized_data[k,-1]])
+                    val_seq = torch.FloatTensor(val_seq).reshape(-1,2)
+                    #===============
+                    val_seq = torch.cat((val_seq, intervention_index[val_i].unsqueeze(0)), dim=0)
+
+                    val_label = torch.FloatTensor(val_label).reshape(-1,2)
+                    seq.append((val_seq, val_label))
+        seq = MyDataset(seq)
+        # 多线程取数据集
+        seq = DataLoader(dataset=seq, batch_size=500, shuffle=True, num_workers=4, drop_last=True)
+        return seq   
+    # 训练
+    elif split != 'test':    
         #A===========
         train_i = train_i + 1
-        train_i = train_i // 4
+        train_i = train_i // 3
 
         for i in range(len(data)):
             x = data[i]
             # 归一化
             normalized_data = scaler.fit_transform(x)
             for j in range(0,18):
-                #for i in range(len(normalized_data) - 160):# 预测30s，但是label大点(100)
+                #for i in range(len(normalized_data) - 160):
                 for i in range(len(normalized_data) - seq_len - pre_len):
-                #for i in range(len(normalized_data) - 190):# 预测30s，但是label大点(100)
+                #for i in range(len(normalized_data) - 190):
                     # 21s => 15s   (70  => 50)
                     # 12s => 15s     (40 => 50)
                     train_seq,train_label = [],[]
@@ -115,7 +152,7 @@ def my_data(split,data):
         seq = MyDataset(seq)
         # 多线程取数据集
         seq = DataLoader(dataset=seq, batch_size=500, shuffle=True, num_workers=4, drop_last=True)
-        return seq
+        return seq   
     # 测试集
     else:
         #A============
@@ -165,7 +202,7 @@ class Exp_Main(Exp_Basic):
     def __init__(self, args):
         super(Exp_Main, self).__init__(args)
         self.folder_path = args.folder_path
-        self.train_data,self.test_data,self.time = get_data(args.folder_path)
+        self.train_data,self.test_data,self.val_data,self.time = get_data(args.folder_path)
         print('train len >>>>>>>> ',len(self.train_data))
         print('test len >>>>>>>> ',len(self.test_data))
     def _build_model(self):
@@ -226,7 +263,7 @@ class Exp_Main(Exp_Basic):
                 # decoder input
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                batch_x = batch_x[:, :-1, :]
+               
                 # encoder - decoder
                 #if 'Linear' in self.args.model or 'Model' in self.args.model:
                 if 'Linear' in self.args.model or 'My_Model' in self.args.model:
@@ -263,7 +300,8 @@ class Exp_Main(Exp_Basic):
         #     vali_data, vali_loader = self._get_data(flag='val')
         #     test_data, test_loader = self._get_data(flag='test')
         train_loader = my_data("train",self.train_data)
-        test_loder = my_data("eval",self.test_data)
+        test_loder = my_data("test",self.test_data)
+        val_loder = my_data("val",self.test_data)
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
             os.makedirs(path)
@@ -301,7 +339,7 @@ class Exp_Main(Exp_Basic):
                 # decoder input
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                batch_x = batch_x[:, :-1, :]
+             
                 # encoder - decoder
                 # if self.args.use_amp:
                 #     with torch.cuda.amp.autocast():
@@ -366,7 +404,7 @@ class Exp_Main(Exp_Basic):
             loss_all.append(train_loss)
             # 测试集当验证集用，5个epoch不下降保存模型
             if not self.args.train_only:
-                test_loss = self.vali(None, test_loder, criterion)
+                test_loss = self.vali(None, val_loder, criterion)
                 test_loss_all.append(test_loss)
                 print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Test Loss: {3:.7f}".format(
                     epoch + 1, train_steps, train_loss, test_loss))
@@ -471,7 +509,7 @@ class Exp_Main(Exp_Basic):
                     # decoder input
                     dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                     dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                    batch_x = batch_x[:, :-1, :]
+                    
                     # encoder - decoder
                     # if self.args.use_amp:
                     #     with torch.cuda.amp.autocast():
@@ -638,7 +676,7 @@ class Exp_Main(Exp_Basic):
                 # decoder input
                 dec_inp = torch.zeros([batch_y.shape[0], self.args.pred_len, batch_y.shape[2]]).float().to(batch_y.device)
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                batch_x = batch_x[:, :-1, :]
+                
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
